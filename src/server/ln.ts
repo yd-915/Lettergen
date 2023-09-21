@@ -11,7 +11,7 @@ import bolt11 from 'bolt11';
 import HttpError from '@wasp/core/HttpError.js';
 import axios from 'axios';
 
-const DOMAIN = "https://server-production-64b6.up.railway.app/" || 'http://localhost:3001';
+const DOMAIN = "" || 'http://localhost:3001';
 
 export function generateK1() {
   return randomBytes(32).toString('hex');
