@@ -16,11 +16,11 @@ import type {
 } from '@wasp/actions/types';
 import Stripe from 'stripe';
 
-const stripe = new Stripe(process.env.STRIPE_KEY!, {
+const stripe = new Stripe("pk_live_51MFepCHNwpuw3izautuJn03QG26k3kc77bxy2062gK94iqo98fgYRpcSMj8bZG20zCQeybQoczTlc5gwu76eBm6l001zesXyEC"!, {
   apiVersion: '2023-08-16',
 });
 
-const DOMAIN = process.env.WASP_WEB_CLIENT_URL || 'http://localhost:3000';
+const DOMAIN = "https://www.coverscribe.space" || 'http://localhost:3000';
 
 const gptConfig = {
   completeCoverLetter: `You are a cover letter generator.
