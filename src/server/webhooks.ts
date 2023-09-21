@@ -2,7 +2,7 @@ import { StripeWebhook } from '@wasp/apis/types';
 import Stripe from 'stripe';
 import { emailSender } from '@wasp/email/index.js';
 
-const stripe = new Stripe(process.env.STRIPE_KEY!, {
+const stripe = new Stripe("pk_live_51MFepCHNwpuw3izautuJn03QG26k3kc77bxy2062gK94iqo98fgYRpcSMj8bZG20zCQeybQoczTlc5gwu76eBm6l001zesXyEC"!, {
   apiVersion: '2023-08-16',
 });
 
@@ -41,7 +41,7 @@ export const stripeWebhook: StripeWebhook = async (request, response, context) =
             datePaid: new Date(),
           },
         });
-      } else if (line_items?.data[0]?.price?.id === process.env.PRODUCT_PRICE_ID) {
+      } else if (line_items?.data[0]?.price?.id === "prod_N5kmuivQBIIwv8") {
         console.log('GPT3.5-turbo Subscription purchased');
         await context.entities.User.updateMany({
           where: {
