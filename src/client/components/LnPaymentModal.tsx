@@ -10,13 +10,14 @@ import {
   HStack,
   VStack,
   Button,
+  Spinner,
 } from '@chakra-ui/react';
 import { AiFillCheckCircle } from 'react-icons/ai';
 import QRCode from 'qrcode.react';
 import { useEffect, useRef, useState } from 'react';
 import milliSatsToCents from '@wasp/actions/milliSatsToCents';
 import decodeInvoice from '@wasp/actions/decodeInvoice';
-import lnPaymentStatus from '@wasp/actions/lnPaymentStatus';
+import updateLnPayment from '@wasp/actions/updateLnPayment';
 
 type LightningInvoice = {
   status: string;
@@ -42,6 +43,7 @@ export default function LnPaymentModal({ lightningInvoice, isOpen, onClose }: In
   const [status, setStatus] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
   const [isReady, setIsReady] = useState(false);
+  const [isPaying, setIsPaying] = useState(false);
   const [amountCents, setAmountCents] = useState<number | null>(null);
 
   const copyButtonRef = useRef(null);
@@ -56,12 +58,19 @@ export default function LnPaymentModal({ lightningInvoice, isOpen, onClose }: In
     if (status !== 'success') {
       if (lightningInvoice) {
         lightningInvoice.status = 'failed';
-        await lnPaymentStatus(lightningInvoice);
+        await updateLnPayment(lightningInvoice);
       }
     }
     if (interval) clearInterval(interval);
+    setStatus('');
     onClose();
   };
+
+  useEffect(() => {
+    if (isPaying && status === 'success') {
+      setIsPaying(false);
+    }
+  }, [isPaying, status]);
 
   useEffect(() => {
     const paymentAmount = async () => {
@@ -101,11 +110,11 @@ export default function LnPaymentModal({ lightningInvoice, isOpen, onClose }: In
           setStatus('success');
 
           lightningInvoice.status = 'success';
-          await lnPaymentStatus(lightningInvoice);
+          await updateLnPayment(lightningInvoice);
           clearInterval(interval);
           setTimeout(() => {
             setStatus('');
-            onClose()
+            onClose();
           }, 2000); // TODO: check this
         } else {
           setStatus('pending');
@@ -114,7 +123,7 @@ export default function LnPaymentModal({ lightningInvoice, isOpen, onClose }: In
         setStatus('error');
 
         lightningInvoice.status = 'failed';
-        await lnPaymentStatus(lightningInvoice);
+        await updateLnPayment(lightningInvoice);
         setErrorMessage('Failed to verify payment.');
         clearInterval(interval);
       }
@@ -131,12 +140,26 @@ export default function LnPaymentModal({ lightningInvoice, isOpen, onClose }: In
     <>
       {lightningInvoice && (
         <div className='rounded bg-white p-2'>
-          <QRCode
-            value={lightningInvoice.pr}
-            size={224}
-            onClick={handleCopyClick}
-            // className='h-full w-full cursor-pointer'
-          />
+          {!isPaying ? (
+            <QRCode
+              value={lightningInvoice.pr}
+              size={224}
+              onClick={handleCopyClick}
+              // className='h-full w-full cursor-pointer'
+            />
+          ) : (
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'center',
+                alignItems: 'center',
+                width: 256,
+                height: 256,
+              }}
+            >
+              <Spinner thickness='4px' speed='0.65s' emptyColor='gray.200' color='purple.500' size='xl' />
+            </div>
+          )}
         </div>
       )}
     </>
@@ -163,25 +186,29 @@ export default function LnPaymentModal({ lightningInvoice, isOpen, onClose }: In
       <ModalOverlay backdropFilter='auto' backdropInvert='15%' backdropBlur='2px' />
       <ModalContent maxH='lg' maxW='lg' bgColor='bg-modal'>
         <ModalHeader>Lightning Invoice</ModalHeader>
-        <ModalCloseButton />
+        <ModalCloseButton visibility={isPaying ? 'hidden' : 'visible'} />
         <ModalBody>
           <VStack gap={3}>
             <Box>{content}</Box>
-            <p className='mb-2 text-center'>Pay ~${amountCents ? amountCents.toFixed(2) : '-.--'} for the API call</p>
-            <HStack gap={3}>
+            <p className='mb-2 text-center'>
+              Pay ~${amountCents ? amountCents.toFixed(2) : <Spinner size='xs' mx={4} />} for the API call
+            </p>
+            <HStack gap={3} visibility={isPaying ? 'hidden' : 'visible'}>
               <Button id='copy-button' ref={copyButtonRef} onClick={handleCopyClick}>
                 Copy
               </Button>
               {!!lightningInvoice && (
                 <a href={`lightning:${lightningInvoice.pr}`}>
-                  <Button id='open-button'>Open in ⚡ Wallet</Button>
+                  <Button id='open-button' onClick={() => setIsPaying(true)}>
+                    Open in ⚡ Wallet
+                  </Button>
                 </a>
               )}
             </HStack>
           </VStack>
         </ModalBody>
         <ModalFooter>
-          <Button size='sm' variant='outline' onClick={handleCloseClick}>
+          <Button size='sm' variant='outline' isDisabled={isPaying} onClick={handleCloseClick}>
             Close
           </Button>
         </ModalFooter>

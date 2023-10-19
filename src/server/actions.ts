@@ -1,6 +1,6 @@
 import HttpError from '@wasp/core/HttpError.js';
 import fetch from 'node-fetch';
-import type { Job, CoverLetter, User } from '@wasp/entities';
+import type { Job, CoverLetter, User, LnPayment } from '@wasp/entities';
 import type {
   GenerateCoverLetter,
   CreateJob,
@@ -44,6 +44,8 @@ type CoverLetterPayload = Pick<CoverLetter, 'title' | 'jobId'> & {
   isCompleteCoverLetter: boolean;
   includeWittyRemark: boolean;
   temperature: number;
+  gptModel: string;
+  lnPayment?: LnPayment;
 };
 
 type OpenAIResponse = {
@@ -65,31 +67,55 @@ type OpenAIResponse = {
       finish_reason: string;
     }
   ];
+  error?: {
+    message?: string;
+  };
 };
 
+async function checkIfUserPaid({ context, lnPayment }: { context: any; lnPayment?: LnPayment }) {
+  if (!context.user.hasPaid && !context.user.credits && !context.user.isUsingLn) {
+    throw new HttpError(402, 'User must pay to continue');
+  }
+  if (context.user.subscriptionStatus === 'past_due') {
+    throw new HttpError(402, 'Your subscription is past due. Please update your payment method.');
+  }
+  if (context.user.isUsingLn) {
+    let invoiceStatus;
+    if (lnPayment) {
+      const lnPaymentInDB = await context.entities.LnPayment.findUnique({
+        where: {
+          pr: lnPayment.pr,
+        },
+      });
+      invoiceStatus = lnPaymentInDB?.status;
+    }
+    console.table({ lnPayment, invoiceStatus });
+    if (invoiceStatus !== 'success') {
+      throw new HttpError(402, 'Your lightning payment has not been paid');
+    }
+  }
+}
+
 export const generateCoverLetter: GenerateCoverLetter<CoverLetterPayload, CoverLetter> = async (
-  { jobId, title, content, description, isCompleteCoverLetter, includeWittyRemark, temperature },
+  { jobId, title, content, description, isCompleteCoverLetter, includeWittyRemark, temperature, gptModel, lnPayment },
   context
 ) => {
   if (!context.user) {
     throw new HttpError(401);
   }
+  await checkIfUserPaid({ context, lnPayment })
 
   let command;
-  let tokenNumber;
   if (isCompleteCoverLetter) {
     command = includeWittyRemark ? gptConfig.coverLetterWithAWittyRemark : gptConfig.completeCoverLetter;
-    tokenNumber = 1000;
   } else {
     command = gptConfig.ideasForCoverLetter;
-    tokenNumber = 500;
   }
 
-
-  console.log('user gpt model: ', context.user.gptModel)
+  console.log(' gpt model: ', gptModel);
 
   const payload = {
-    model: context.user.gptModel === 'gpt-4' ? 'gpt-4' : 'gpt-3.5-turbo',
+    model: gptModel === 'gpt-4' ? 'gpt-4' : 'gpt-3.5-turbo-16k',
     messages: [
       {
         role: 'system',
@@ -100,7 +126,6 @@ export const generateCoverLetter: GenerateCoverLetter<CoverLetterPayload, CoverL
         content: `My Resume: ${content}. Job title: ${title} Job Description: ${description}.`,
       },
     ],
-    max_tokens: tokenNumber,
     temperature,
   };
 
@@ -132,6 +157,8 @@ export const generateCoverLetter: GenerateCoverLetter<CoverLetterPayload, CoverL
 
     json = (await response.json()) as OpenAIResponse;
 
+    if (json?.error) throw new HttpError(500, json?.error?.message || 'Something went wrong');
+
     return context.entities.CoverLetter.create({
       data: {
         title,
@@ -153,25 +180,21 @@ export const generateCoverLetter: GenerateCoverLetter<CoverLetterPayload, CoverL
       });
     }
     console.error(error);
+    throw new HttpError(error.statusCode || 500, error.message || 'Something went wrong');
   }
-
-  return new Promise((resolve, reject) => {
-    reject(new HttpError(500, 'Something went wrong'));
-  });
 };
 
-export const generateEdit: GenerateEdit<{ content: string; improvement: string }, string> = async (
-  { content, improvement },
-  context
-) => {
+export const generateEdit: GenerateEdit<
+  { content: string; improvement: string; lnPayment?: LnPayment },
+  string
+> = async ({ content, improvement, lnPayment }, context) => {
   if (!context.user) {
     throw new HttpError(401);
   }
+  await checkIfUserPaid({ context, lnPayment });
 
   let command;
-  let tokenNumber;
   command = `You are a cover letter editor. You will be given a piece of isolated text from within a cover letter and told how you can improve it. Only respond with the revision. Make sure the revision is in the same language as the given isolated text.`;
-  tokenNumber = 1000;
 
   const payload = {
     model: context.user.gptModel === 'gpt-4' ? 'gpt-4' : 'gpt-3.5-turbo',
@@ -185,7 +208,6 @@ export const generateEdit: GenerateEdit<{ content: string; improvement: string }
         content: `Isolated text from within cover letter: ${content}. It should be improved by making it more: ${improvement}`,
       },
     ],
-    max_tokens: tokenNumber,
     temperature: 0.5,
   };
 
@@ -217,9 +239,9 @@ export const generateEdit: GenerateEdit<{ content: string; improvement: string }
 
     json = (await response.json()) as OpenAIResponse;
     if (json?.choices[0].message.content.length) {
-      return new Promise((resolve, reject) => {
-        resolve(json?.choices[0].message.content);
-      });
+      return json?.choices[0].message.content;
+    } else {
+      throw new HttpError(500, 'GPT returned an empty response');
     }
   } catch (error: any) {
     if (!context.user.hasPaid && error?.statusCode != 402) {
@@ -231,13 +253,10 @@ export const generateEdit: GenerateEdit<{ content: string; improvement: string }
           },
         },
       });
-    } 
+    }
     console.error(error);
+    throw new HttpError(error.statusCode || 500, error.message || 'Something went wrong');
   }
-
-  return new Promise((resolve, reject) => {
-    reject(new HttpError(500, 'Something went wrong'));
-  });
 };
 
 export type JobPayload = Pick<Job, 'title' | 'company' | 'location' | 'description'>;
@@ -283,16 +302,22 @@ export const updateJob: UpdateJob<UpdateJobPayload, Job> = (
 };
 
 export type UpdateCoverLetterPayload = Pick<Job, 'id' | 'description'> &
-  Pick<CoverLetter, 'content'> & { isCompleteCoverLetter: boolean; includeWittyRemark: boolean; temperature: number };
-type JobWithCoverLetter = Job & { coverLetter: CoverLetter[] };
+  Pick<CoverLetter, 'content'> & {
+    isCompleteCoverLetter: boolean;
+    includeWittyRemark: boolean;
+    temperature: number;
+    gptModel: string;
+    lnPayment?: LnPayment;
+  };
 
-export const updateCoverLetter: UpdateCoverLetter<UpdateCoverLetterPayload, JobWithCoverLetter> = async (
-  { id, description, content, isCompleteCoverLetter, includeWittyRemark, temperature },
+export const updateCoverLetter: UpdateCoverLetter<UpdateCoverLetterPayload, string> = async (
+  { id, description, content, isCompleteCoverLetter, includeWittyRemark, temperature, gptModel, lnPayment },
   context
 ) => {
   if (!context.user) {
     throw new HttpError(401);
   }
+  await checkIfUserPaid({ context, lnPayment });
 
   const job = await context.entities.Job.findFirst({
     where: {
@@ -314,11 +339,13 @@ export const updateCoverLetter: UpdateCoverLetter<UpdateCoverLetterPayload, JobW
       isCompleteCoverLetter,
       includeWittyRemark,
       temperature,
+      gptModel,
+      lnPayment,
     },
     context
   );
 
-  return context.entities.Job.update({
+  await context.entities.Job.update({
     where: {
       id,
     },
@@ -326,10 +353,9 @@ export const updateCoverLetter: UpdateCoverLetter<UpdateCoverLetterPayload, JobW
       description,
       coverLetter: { connect: { id: coverLetter.id } },
     },
-    include: {
-      coverLetter: true,
-    },
   });
+
+  return coverLetter.id;
 };
 
 export const editCoverLetter: EditCoverLetter<{ coverLetterId: string; content: string }, CoverLetter> = (
@@ -366,11 +392,11 @@ export const deleteJob: DeleteJob<{ jobId: string }, { count: number }> = ({ job
   });
 };
 
-type UpdateUserArgs = Pick<User, 'id' | 'notifyPaymentExpires'>;
+type UpdateUserArgs = Partial<Pick<User, 'id' | 'notifyPaymentExpires' | 'gptModel'>>;
 type UserWithoutPassword = Omit<User, 'password'>;
 
 export const updateUser: UpdateUser<UpdateUserArgs, UserWithoutPassword> = async (
-  { notifyPaymentExpires },
+  { notifyPaymentExpires, gptModel },
   context
 ) => {
   if (!context.user) {
@@ -383,6 +409,7 @@ export const updateUser: UpdateUser<UpdateUserArgs, UserWithoutPassword> = async
     },
     data: {
       notifyPaymentExpires,
+      gptModel,
     },
     select: {
       id: true,
@@ -396,6 +423,7 @@ export const updateUser: UpdateUser<UpdateUserArgs, UserWithoutPassword> = async
       credits: true,
       gptModel: true,
       isUsingLn: true,
+      subscriptionStatus: true,
     },
   });
 };

@@ -1,9 +1,11 @@
 app applyai {
   wasp: {
-    version: "^0.11.1"
+    version: "^0.11.6"
   },
   title: "CoverLetterGPT",
   head: [
+        "<meta property=\"title\" content=\"CoverLetterGPT\" />",
+        "<meta property=\"description\" content=\"Create Unique Cover Letters Based on Your Skills using GPT. Supercharge Your Job Search.\" />",
         "<meta property=\"og:title\" content=\"CoverLetterGPT\" />",
         "<meta property=\"og:description\" content=\"Create Unique Cover Letters Based on Your Skills using GPT. Supercharge Your Job Search.\" />",
         "<meta property=\"og:type\" content=\"website\" />",
@@ -31,7 +33,7 @@ app applyai {
   },
   client: {
     rootComponent: import App from "@client/App",
-    setupFn: import clientSetup from "@client/clientSetup.js"
+    setupFn: import clientSetup from "@client/clientSetup"
   },
   emailSender: {
     provider: SendGrid,
@@ -47,7 +49,7 @@ app applyai {
     ("@emotion/react", "11.10.6"),
     ("@emotion/styled", "11.10.6"),
     ("framer-motion", "6.5.1"),
-    ("react-hook-form", "7.43.1"),
+    ("react-hook-form", "^7.45.4"),
     ("pdfjs-dist", "3.3.122"),
     ("@types/pdfjs-dist", "2.10.378"),
     ("stripe", "13.3.0"),
@@ -74,6 +76,7 @@ entity User {=psl
   datePaid                  DateTime?
   stripeId                  String? 
   checkoutSessionId         String?
+  subscriptionStatus        String?              
   notifyPaymentExpires      Boolean              @default(false)
   credits                   Int                  @default(3)
   letters                   CoverLetter[]
@@ -196,7 +199,7 @@ page CheckoutPage {
 
 action generateCoverLetter {
   fn: import { generateCoverLetter } from "@server/actions.js",
-  entities: [CoverLetter, User]
+  entities: [CoverLetter, User, LnPayment]
 }
 
 action createJob {
@@ -211,12 +214,12 @@ action updateJob {
 
 action updateCoverLetter {
   fn: import { updateCoverLetter } from "@server/actions.js",
-  entities: [Job, CoverLetter, User]
+  entities: [Job, CoverLetter, User, LnPayment]
 }
 
 action generateEdit {
   fn: import { generateEdit } from "@server/actions.js",
-  entities: [CoverLetter, User]
+  entities: [CoverLetter, User, LnPayment]
 }
 
 action editCoverLetter {
@@ -258,8 +261,8 @@ action decodeInvoice {
   fn: import { decodeInvoice } from "@server/ln.js",
 }
 
-action lnPaymentStatus {
-  fn: import { lnPaymentStatus } from "@server/ln.js",
+action updateLnPayment {
+  fn: import { updateLnPayment } from "@server/ln.js",
   entities: [LnPayment]
 }
 
